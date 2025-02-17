@@ -1,0 +1,11 @@
+[package]
+name = "uic-ticket-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+binrw = { version = "0.14.1", default-features = false }
+chrono = { version = "0.4.39", default-features = false }
+hex-literal = "0.4.1"
+miniz_oxide = "0.8.4"
+modular-bitfield = "0.11.2"
