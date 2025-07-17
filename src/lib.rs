@@ -1,144 +1,100 @@
+use binrw::BinRead;
+
 #[warn(clippy::alloc_instead_of_core)]
 #[warn(clippy::std_instead_of_alloc)]
 #[warn(clippy::std_instead_of_core)]
 
-use core::fmt::Debug;
-use binrw::io::Cursor;
-use binrw::{binread, BinRead, BinResult, VecArgs};
-use miniz_oxide::inflate::decompress_to_vec_zlib;
-use modular_bitfield::bitfield;
-use modular_bitfield::prelude::B5;
-use crate::helpers::{EditionTime, FixedLengthString, FixedLengthStringNumber, LengthPrefixedString};
+pub mod tlb;
+pub mod tlb_records;
+pub mod flex;
+pub mod pretix;
+mod sig;
+mod dosipas;
 
-mod helpers;
-
-
-#[derive(Debug, Clone)]
-#[binread]
-#[br(import(version: usize))]
-pub enum TicketSignature {
-    #[br(assert(version == 1, "ASN1Signature requires version == 01"))]
-    ASN1Signature([u8; 50]),
-    #[br(assert(version == 2, "RawSignature requires version == 02"))]
-    RawSignature([u8; 64]),
+pub mod asn1 {
+    include!("../asn1_gen/rail_ticket_data_v1_3_5.rs");
+    include!("../asn1_gen/rail_ticket_data_v2_0_3.rs");
+    include!("../asn1_gen/rail_ticket_data_v3_0_5.rs");
+    include!("../asn1_gen/barcode_header_v1_0_0.rs");
+    include!("../asn1_gen/barcode_header_v2_0_1.rs");
+    include!("../asn1_gen/dynamic_content_data_v1_0_5.rs");
+    include!("../asn1_gen/fr_intercode_v1.rs");
+    include!("../asn1_gen/sncf_transport_v1.rs");
+    include!("../asn1_gen/uicPretix_v1.rs");
 }
 
-#[binrw::parser(reader, endian)]
-fn parse_payload_tlv(payload_length: usize) -> BinResult<Vec<TicketTLV>> {
-    let pos = reader.stream_position()?;
+#[derive(Debug)]
+pub enum Error {
+    UnknownBarcodeType,
+    InvalidFormat(Box<dyn binrw::error::CustomError>)
+}
 
-    let mut tlvs = Vec::new();
+pub enum Ticket {
+    UicTlbTicket(tlb::Ticket),
+    UicDosipasTicket(dosipas::DosipasTicket),
+}
 
-    let payload_data: Vec<u8> = <_>::read_options(reader, endian, VecArgs {
-        count: payload_length,
-        inner: (),
-    })?;
-
-    let payload_data = decompress_to_vec_zlib(&payload_data)
-        .map_err(|e| {
-            binrw::Error::Custom {
-                pos,
-                err: Box::new(e),
+impl Ticket {
+    pub fn parse(data: &[u8]) -> Result<Ticket, Error> {
+        if data.len() >= 3 && &data[0..3] == b"#UT" {
+            match tlb::Ticket::read(&mut binrw::io::Cursor::new(data)) {
+                Ok(ticket) => Ok(Ticket::UicTlbTicket(ticket)),
+                Err(err) => Err(Error::InvalidFormat(Box::new(err))),
             }
-        })?;
+        } else if let Ok(data) = rasn::uper::decode::<asn1::asn_module_header_v2::UicBarcodeHeader>(data) {
+            if data.format.as_slice() != b"U2" {
+                return Err(Error::UnknownBarcodeType);
+            }
+            unimplemented!()
+        } else if let Ok(data) = rasn::uper::decode::<asn1::asn_module_header_v1::UicBarcodeHeader>(data) {
+            if data.format.as_slice() != b"U1" {
+                return Err(Error::UnknownBarcodeType);
+            }
+            unimplemented!()
+        } else {
+            Err(Error::UnknownBarcodeType)
+        }
+    }
+}
 
-    let total_payload_data = payload_data.len();
-    let mut payload_cursor = Cursor::new(payload_data);
 
-    while payload_cursor.position() + 8 < total_payload_data as u64 {
-        let t: TicketTLV = <_>::read_options(&mut payload_cursor, endian, ())?;
-        tlvs.push(t);
+mod test {
+    #[test]
+    fn test_decode_pretix_tlb() {
+        use num_traits::cast::ToPrimitive;
+
+        let data = hex_literal::hex!("235554303235313031303030303100000000336eb61a6ab9591402bc6c78fba34bbbff70f079f6adf93ec1798a910000000041a2492135f04f4cbe40af72f39b3c448bca115434b1085f8ac7271e30303436789c333534300c883030343030b61460b23fd55af73f7a9aeba1f0cd0c2c40a0e8d268baf4ecd48d1b00e54f0d4f");
+        let ticket = super::Ticket::parse(&data).unwrap();
+        let ticket = match ticket {
+            super::Ticket::UicTlbTicket(ticket) => ticket,
+            _ => unreachable!()
+        };
+
+        assert_eq!(ticket.version, 2);
+        assert_eq!(ticket.security_provider_rics, "5101");
+        assert_eq!(ticket.security_provider_key_id, "1");
+        assert_eq!(ticket.records.len(), 1);
+        let pretix = match &ticket.records[0] {
+            super::tlb_records::Record::PretixTicket(c) => c,
+            _ => unreachable!(),
+        };
+        assert_eq!(pretix.order_year, 2025);
+        assert_eq!(pretix.order_day, 190);
+        assert_eq!(pretix.order_time, 1216);
+        assert_eq!(pretix.event_id.to_usize().unwrap(), 1);
+        assert_eq!(pretix.item_id.to_usize().unwrap(), 1);
+        assert!(pretix.subevent_id.is_none());
+        assert!(pretix.variation_id.is_none());
+        assert_eq!(pretix.attendee_name.as_ref().unwrap().as_str(), "Q Misell");
     }
 
-    Ok(tlvs)
-}
-
-
-#[derive(Debug, Clone)]
-#[binread]
-#[br(magic = b"#UT")]
-pub struct Ticket {
-    pub version: FixedLengthStringNumber<2>,
-    pub security_provider_rics: FixedLengthString<4>,
-    pub security_provider_key_id: FixedLengthString<5>,
-    #[br(args(version.0))]
-    pub signature: TicketSignature,
-    pub payload_length: FixedLengthStringNumber<4>,
-    #[br(parse_with = parse_payload_tlv, args(payload_length.0))]
-    pub payload: Vec<TicketTLV>,
-}
-
-#[derive(Debug, Clone)]
-#[binread]
-pub struct TicketTLV {
-    pub record_id: FixedLengthString<6>,
-    pub record_version: FixedLengthString<2>,
-    pub record_length: FixedLengthStringNumber<4>,
-    #[br(args(record_id.to_string(), record_length.0))]
-    pub record_data: TicketTLVRecord,
-}
-
-#[bitfield]
-#[derive(BinRead, Debug, Clone)]
-#[br(map = Self::from_bytes)]
-pub struct UHeadFlags {
-    pub international_ticket: bool,
-    pub edited_by_agent: bool,
-    pub specimen: bool,
-    #[allow(non_snake_case)]
-    _unused: B5,
-}
-
-
-#[bitfield]
-#[derive(BinRead, Debug, Clone)]
-#[br(map = Self::from_bytes)]
-pub struct TlayFieldFormatting {
-    pub bold: bool,
-    pub italic: bool,
-    pub small: bool,
-    #[allow(non_snake_case)]
-    _unused: B5,
-}
-
-#[derive(Debug, Clone)]
-#[binread]
-pub struct TLayField {
-    pub line: FixedLengthStringNumber<2>,
-    pub column: FixedLengthStringNumber<2>,
-    pub height: FixedLengthStringNumber<2>,
-    pub width: FixedLengthStringNumber<2>,
-    pub format: TlayFieldFormatting,
-    pub text: LengthPrefixedString,
-}
-
-#[derive(Debug, Clone)]
-#[binread]
-#[br(import(record_id: String, record_length: usize))]
-pub enum TicketTLVRecord {
-    #[br(assert(record_id == "U_HEAD", "Only U_HEAD record can be parsed as U_HEAD"))]
-    UHead {
-        distributor_rics: FixedLengthString<4>,
-        ticket_key: FixedLengthString<20>,
-        edition_time: EditionTime,
-        flags: UHeadFlags,
-        language: FixedLengthString<2>,
-        second_language: FixedLengthString<2>,
-    },
-    #[br(assert(record_id == "U_TLAY", "Only U_TLAY record can be parsed as U_TLAY"))]
-    UTlay {
-        layout_standard: FixedLengthString<4>,
-        number_of_fields: FixedLengthStringNumber<4>,
-        #[br(count = number_of_fields.0)]
-        fields: Vec<TLayField>,
-    },
-    #[br(assert(record_id == "U_FLEX", "Only U_FLEX record can be parsed as U_FLEX"))]
-    UFlex {
-        #[br(count = record_length - 12)]
-        data: Vec<u8>,
-    },
-    Unknown {
-        #[br(count = record_length - 12)]
-        data: Vec<u8>,
-    },
+    #[test]
+    fn test_decode_pretix_dosipas() {
+        let data = hex_literal::hex!("0155655a013ec00008084df6ac5831a1524d81b10023d9e091e0341888f8257b3000404040421448135a5cd95b1b0072a8648ce380401096086480165030403023e303c021c369b48928fbf9e186be758f0134e437914bc87f3903ea8410a340a79021c2d3ec4b97854b9c0e73dd5d5a2e75281b0eac593447ccbe0b9cf68220");
+        let ticket = super::Ticket::parse(&data).unwrap();
+        let ticket = match ticket {
+            super::Ticket::UicDosipasTicket(ticket) => ticket,
+            _ => unreachable!()
+        };
+    }
 }
