@@ -7,7 +7,7 @@ pub enum FlexData {
     V3(crate::asn1::asn_module_rail_ticket_data_v2::UicRailTicketData),
 }
 
-enum FlexVersion {
+pub(crate) enum FlexVersion {
     V1_3,
     V2,
     V3
@@ -39,7 +39,7 @@ pub(crate) fn parse_flex_tlv(record_version: &[u8], record_length: usize) -> Bin
     Ok(data)
 }
 
-fn parse_flex(version: FlexVersion, data: &[u8]) -> Result<FlexData, rasn::error::DecodeError> {
+pub(crate) fn parse_flex(version: FlexVersion, data: &[u8]) -> Result<FlexData, rasn::error::DecodeError> {
     match version {
         FlexVersion::V1_3 => Ok(FlexData::V1_3(rasn::uper::decode(data)?)),
         FlexVersion::V2 => Ok(FlexData::V2(rasn::uper::decode(data)?)),

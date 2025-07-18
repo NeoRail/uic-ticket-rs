@@ -16,7 +16,21 @@ pub struct Ticket {
     #[allow(dead_code)]
     payload_length: FixedLengthStringNumber<4>,
     #[br(parse_with = parse_payload_tlv, args(payload_length.0))]
+    pub records: TicketRecords,
+}
+
+#[derive(Debug, Clone)]
+pub struct TicketRecords {
+    pub(crate) tbs_data: Vec<u8>,
     pub records: Vec<super::tlb_records::Record>,
+}
+
+impl std::ops::Deref for TicketRecords {
+    type Target = Vec<super::tlb_records::Record>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.records
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -44,17 +58,17 @@ struct TicketRecord {
 }
 
 #[binrw::parser(reader, endian)]
-fn parse_payload_tlv(payload_length: usize) -> BinResult<Vec<super::tlb_records::Record>> {
+fn parse_payload_tlv(payload_length: usize) -> BinResult<TicketRecords> {
     let pos = reader.stream_position()?;
 
     let mut tlvs = Vec::new();
 
-    let payload_data: Vec<u8> = <_>::read_options(reader, endian, binrw::VecArgs {
+    let payload_data_raw: Vec<u8> = <_>::read_options(reader, endian, binrw::VecArgs {
         count: payload_length,
         inner: (),
     })?;
 
-    let payload_data = decompress_to_vec_zlib(&payload_data)
+    let payload_data = decompress_to_vec_zlib(&payload_data_raw)
         .map_err(|e| {
             binrw::Error::Custom {
                 pos,
@@ -70,7 +84,10 @@ fn parse_payload_tlv(payload_length: usize) -> BinResult<Vec<super::tlb_records:
         tlvs.push(t.record_data);
     }
 
-    Ok(tlvs)
+    Ok(TicketRecords {
+        tbs_data: payload_data_raw,
+        records: tlvs,
+    })
 }
 
 fn trim_bytes<'a>(bytes: &'a[u8], trim: &[u8]) -> &'a [u8] {
@@ -105,6 +122,12 @@ macro_rules! fixed_length_string {
 
             fn deref(&self) -> &Self::Target {
                 &self.0
+            }
+        }
+
+        impl <const N: usize> AsRef<str> for $name<N> {
+            fn as_ref(&self) -> &str {
+                std::str::from_utf8(&self.0).unwrap_or_default()
             }
         }
 

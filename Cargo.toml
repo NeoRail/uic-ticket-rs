@@ -6,11 +6,16 @@ edition = "2021"
 [dependencies]
 binrw = { version = "0.15.0", default-features = false }
 chrono = { version = "0.4.39", default-features = false }
-hex-literal = "1.0.0"
 miniz_oxide = "0.8.4"
 modular-bitfield = "0.12.0"
 rasn = "0.27.0"
 num-traits = "0.2.19"
+botan = { version = "0.11.1", features = ["botan3"] }
+num-bigint = "0.4.6"
 
 [build-dependencies]
 rasn-compiler = "0.13.0"
+
+[dev-dependencies]
+hex-literal = "1.0.0"
+botan = { version = "0.11.1", features = ["botan3", "pkg-config"] }
