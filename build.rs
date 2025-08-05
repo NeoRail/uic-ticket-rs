@@ -11,6 +11,7 @@ fn main() {
     println!("cargo:rerun-if-changed=asn1/fr_intercode_v1.asn");
     println!("cargo:rerun-if-changed=asn1/sncf_transport_v1.asn");
     println!("cargo:rerun-if-changed=asn1/uicPretix.asn");
+    println!("cargo:rerun-if-changed=asn1/pretixWallet.asn");
 
     Compiler::<RasnBackend, _>::new()
         .add_asn_by_path(PathBuf::from("asn1/uicRailTicketData_v1.3.5.asn"))
@@ -47,5 +48,9 @@ fn main() {
     Compiler::<RasnBackend, _>::new()
         .add_asn_by_path(PathBuf::from("asn1/uicPretix.asn"))
         .set_output_path(PathBuf::from("./asn1_gen/uicPretix_v1.rs"))
+        .compile().unwrap();
+    Compiler::<RasnBackend, _>::new()
+        .add_asn_by_path(PathBuf::from("asn1/pretixWallet.asn"))
+        .set_output_path(PathBuf::from("./asn1_gen/pretixWallet_v1.rs"))
         .compile().unwrap();
 }

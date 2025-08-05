@@ -4,7 +4,7 @@ use binrw::{BinRead, BinResult};
 pub enum FlexData {
     V1_3(crate::asn1::asn_module_rail_ticket_data_v13::UicRailTicketData),
     V2(crate::asn1::asn_module_rail_ticket_data_v2::UicRailTicketData),
-    V3(crate::asn1::asn_module_rail_ticket_data_v2::UicRailTicketData),
+    V3(crate::asn1::asn_module_rail_ticket_data_v3::UicRailTicketData),
 }
 
 pub(crate) enum FlexVersion {

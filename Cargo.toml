@@ -10,12 +10,21 @@ miniz_oxide = "0.8.4"
 modular-bitfield = "0.12.0"
 rasn = "0.27.0"
 num-traits = "0.2.19"
-botan = { version = "0.11.1", features = ["botan3"] }
 num-bigint = "0.4.6"
+p256 = { version = "0.13.2", features = ["ecdsa"] }
+signature = "2.2.0"
+spki = { version = "0.7.3", features = ["pem"] }
+dsa = "0.6.3"
+ecdsa = "0.16.9"
+sha1 = "0.10.6"
+sha2 = "0.10.9"
+digest = "0.10.7"
+der = { version = "0.7.10", features = ["pem"] }
+pem = "3.0.5"
+ed25519-dalek = { version = "2.2.0", features = ["pkcs8"] }
 
 [build-dependencies]
 rasn-compiler = "0.13.0"
 
 [dev-dependencies]
 hex-literal = "1.0.0"
-botan = { version = "0.11.1", features = ["botan3", "pkg-config"] }

@@ -5,8 +5,6 @@ use chrono::NaiveDateTime;
 use modular_bitfield::bitfield;
 use modular_bitfield::prelude::B5;
 use crate::tlb::{FixedLengthString, FixedLengthStringStripSpace, FixedLengthStringStripSpaceZero, FixedLengthStringNumber};
-use crate::flex::{FlexData, parse_flex_tlv};
-use crate::pretix::parse_pretix_ticket_tlv;
 
 #[derive(Debug, Clone)]
 #[binread]
@@ -28,21 +26,32 @@ pub enum Record {
     )]
     UFlex(
         #[br(
-            parse_with=parse_flex_tlv,
+            parse_with=crate::flex::parse_flex_tlv,
             args(record_version, record_length - 12)
         )]
-        FlexData
+        crate::flex::FlexData
     ),
     #[br(
         assert(record_id == "5101PX", "Only Pretix ticket records can be parsed as 5101PX"),
-        assert(record_version == "1", "Invalid pretix data version")
+        assert(record_version == "1", "Invalid Pretix data version")
     )]
     PretixTicket(
         #[br(
-            parse_with=parse_pretix_ticket_tlv,
+            parse_with=crate::pretix::parse_pretix_ticket_tlv,
             args(record_length - 12)
         )]
         crate::asn1::asn_module_pretix::PretixTicket
+    ),
+    #[br(
+        assert(record_id == "5101PW", "Only Pretix wallet records can be parsed as 5101PW"),
+        assert(record_version == "1", "Invalid Pretix wallet data version")
+    )]
+    PretixWallet(
+        #[br(
+            parse_with=crate::pretix::parse_pretix_wallet_tlv,
+            args(record_length - 12)
+        )]
+        crate::asn1::asn_module_pretix_wallet::PretixWallet
     ),
     Custom (
         #[br(args(record_id.to_string(), record_version.to_string(), record_length - 12))]

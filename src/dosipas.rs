@@ -1,5 +1,9 @@
 use std::convert::TryFrom;
 use crate::flex::{parse_flex, FlexVersion};
+use crate::sig;
+
+const SECP256_R1: rasn::types::ObjectIdentifier = rasn::types::ObjectIdentifier::new_unchecked(
+    std::borrow::Cow::Borrowed(&[1, 2, 840, 10045, 3, 1, 7]));
 
 #[derive(Debug, Clone)]
 pub struct DosipasTicket {
@@ -10,10 +14,9 @@ pub struct DosipasTicket {
     pub(crate) level1_signature: Vec<u8>,
     pub(crate) level2_signature: Option<Vec<u8>>,
     pub(crate) level1_key_alg: Option<rasn::prelude::ObjectIdentifier>,
-    pub(crate) level2_key_alg: Option<rasn::prelude::ObjectIdentifier>,
     pub(crate) level1_signing_alg: Option<rasn::prelude::ObjectIdentifier>,
     pub(crate) level2_signing_alg: Option<rasn::prelude::ObjectIdentifier>,
-    pub(crate) level2_public_key: Option<std::sync::Arc<botan::Pubkey>>,
+    pub(crate) level2_public_key: Option<sig::PublicKey>,
     pub end_of_validity: Option<chrono::DateTime<chrono::Utc>>,
     pub validity_duration: Option<chrono::TimeDelta>,
     pub records: Vec<Record>,
@@ -30,13 +33,14 @@ impl DosipasTicket {
 pub enum Record {
     Flex(crate::flex::FlexData),
     PretixTicket(crate::asn1::asn_module_pretix::PretixTicket),
+    PretixWallet(crate::asn1::asn_module_pretix_wallet::PretixWallet),
     Custom(CustomRecord),
 }
 
 #[derive(Debug, Clone)]
 pub struct CustomRecord {
-    record_id: String,
-    data: Vec<u8>
+    pub record_id: String,
+    pub data: Vec<u8>
 }
 
 #[derive(Debug, Clone)]
@@ -52,12 +56,9 @@ impl TryFrom<crate::asn1::asn_module_header_v1::UicBarcodeHeader> for DosipasTic
             return Err(crate::Error::UnknownBarcodeType);
         }
 
-        let level2_public_key = match &header.level2_signed_data.level1_data.level2_public_key {
-            Some(v) => {
-                Some(botan::Pubkey::load_der(v.as_ref())?)
-            },
-            None => None
-        };
+        let level2_public_key = header.level2_signed_data.level1_data.level2_public_key.as_ref().map(|v| {
+            load_level2_pubkey(&header.level2_signed_data.level1_data.level2_key_alg, &v)
+        }).transpose()?;
 
         Ok(Self {
             security_provider: if let Some(id) = header.level2_signed_data.level1_data.security_provider_num {
@@ -73,10 +74,9 @@ impl TryFrom<crate::asn1::asn_module_header_v1::UicBarcodeHeader> for DosipasTic
             level1_signature: header.level2_signed_data.level1_signature.unwrap_or_default().to_vec(),
             level2_signature: header.level2_signature.map(|s| s.to_vec()),
             level1_key_alg: header.level2_signed_data.level1_data.level1_key_alg,
-            level2_key_alg: header.level2_signed_data.level1_data.level2_key_alg,
             level1_signing_alg: header.level2_signed_data.level1_data.level1_signing_alg,
             level2_signing_alg: header.level2_signed_data.level1_data.level2_signing_alg,
-            level2_public_key: level2_public_key.map(std::sync::Arc::new),
+            level2_public_key,
             end_of_validity: None,
             validity_duration: None,
             records: header.level2_signed_data.level1_data.data_sequence.into_iter().map(|r| {
@@ -96,12 +96,9 @@ impl TryFrom<crate::asn1::asn_module_header_v2::UicBarcodeHeader> for DosipasTic
             return Err(crate::Error::UnknownBarcodeType);
         }
 
-        let level2_public_key = match &header.level2_signed_data.level1_data.level2_public_key {
-            Some(v) => {
-                Some(botan::Pubkey::load_der(v.as_ref())?)
-            },
-            None => None
-        };
+        let level2_public_key = header.level2_signed_data.level1_data.level2_public_key.as_ref().map(|v| {
+            load_level2_pubkey(&header.level2_signed_data.level1_data.level2_key_alg, &v)
+        }).transpose()?;
 
         let end_of_validity = match (
             &header.level2_signed_data.level1_data.end_of_validity_year,
@@ -148,10 +145,9 @@ impl TryFrom<crate::asn1::asn_module_header_v2::UicBarcodeHeader> for DosipasTic
             level1_signature: header.level2_signed_data.level1_signature.unwrap_or_default().to_vec(),
             level2_signature: header.level2_signature.map(|s| s.to_vec()),
             level1_key_alg: header.level2_signed_data.level1_data.level1_key_alg,
-            level2_key_alg: header.level2_signed_data.level1_data.level2_key_alg,
             level1_signing_alg: header.level2_signed_data.level1_data.level1_signing_alg,
             level2_signing_alg: header.level2_signed_data.level1_data.level2_signing_alg,
-            level2_public_key: level2_public_key.map(std::sync::Arc::new),
+            level2_public_key,
             end_of_validity: end_of_validity.map(|t| t.and_utc()),
             validity_duration,
             records: header.level2_signed_data.level1_data.data_sequence.into_iter().map(|r| {
@@ -170,6 +166,7 @@ fn parse_record(data_format: String, data: &[u8]) -> Result<Record, crate::Error
         "FCB2" => Ok(Record::Flex(parse_flex(FlexVersion::V2, data)?)),
         "FCB3" => Ok(Record::Flex(parse_flex(FlexVersion::V3, data)?)),
         "_5101PTIX" => Ok(Record::PretixTicket(rasn::uper::decode(data)?)),
+        "_5101PXW" => Ok(Record::PretixWallet(rasn::uper::decode(data)?)),
         _ => Ok(Record::Custom(CustomRecord {
             record_id: data_format,
             data: data.to_vec(),
@@ -184,5 +181,14 @@ fn parse_leve2_data(data_format: String, data: &[u8]) -> Result<Level2Data, crat
             record_id: data_format,
             data: data.to_vec(),
         }))
+    }
+}
+
+fn load_level2_pubkey(alg: &Option<rasn::types::ObjectIdentifier>, pk: &[u8]) -> Result<sig::PublicKey, crate::Error> {
+    if alg.as_ref() == Some(&SECP256_R1) {
+        Ok(sig::PublicKey::P256(p256::ecdsa::VerifyingKey::from_sec1_bytes(pk)
+            .map_err(|e| crate::Error::CryptographyError(Box::new(e)))?))
+    } else {
+        Err(crate::Error::UnsupportedData("Unsupported Level 2 public key".into()))
     }
 }
